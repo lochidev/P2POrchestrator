@@ -14,7 +14,7 @@ int main()
 		struct sockaddr_in address;
 		int opt = 1;
 		int addrlen = sizeof(address);
-		const char* hello = "Hello from server";
+		//const char* hello = "Hello from server";
 
 		// Creating socket file descriptor
 		if (SOCKET_ERROR((server_fd = socket(AF_INET, SOCK_STREAM, 0)))) {
@@ -58,6 +58,7 @@ int main()
 			unsigned short port = address.sin_port;
 			//char* ipStr = inet_ntoa(ipAddr);;
 			master.SetTask({ ClientSocket, ipAddr, port });
+			master.ResetCount();
 			for (auto& w : workerPtrs)
 			{
 				w->StartWork(); // work available

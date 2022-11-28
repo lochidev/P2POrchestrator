@@ -7,7 +7,7 @@
     #endif
     #include <winsock2.h>
     #include <Ws2tcpip.h>
-    #define SOCKET_ERROR(skt) skt == INVALID_SOCKET
+    #define SOCKET_ERROR(skt) (skt) == INVALID_SOCKET
     #pragma comment(lib, "Ws2_32.lib")
 #else
     /* Assume that any non-Windows platform uses POSIX-style sockets instead. */
@@ -22,9 +22,9 @@
 
 
 #define PORT 5432
-#define DEFAULT_BUFLEN 3 // 1st byte: (M)obile or (P)C, 2 and 3: Region ex: 'US' 
+#define DEFAULT_BUFLEN 4 // 1st byte: (M)obile or (P)C, 2 and 3: Region ex: 'US' 4 : padding for ip size
 #ifndef NDEBUG
-#define LOG_INFO(i) std::cout << i << std::endl;
+#define LOG_INFO(i) std::cout << "[t:" << std::this_thread::get_id() << "] " << i << std::endl;
 #else
 #define LOG_INFO(i);
 #endif
