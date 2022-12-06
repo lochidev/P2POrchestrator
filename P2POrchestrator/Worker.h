@@ -7,8 +7,8 @@
 #include <memory>
 #include <vector>
 #include <atomic>
-
-
+#include <unordered_map>
+#include <stdint.h>
 class Worker {
 
 public:
@@ -33,10 +33,10 @@ public:
 		//}
 		cv.notify_one();
 	}
-	void AddClient(const Task tsk)
+	void RemoveClient(std::shared_ptr<Task> pTask)
 	{
-		std::lock_guard lk{ mtx }; //deadlocked here, fix
-		clientTask = tsk;
+		std::lock_guard lk{ mtx }; //deadlocked here, fixed
+		removeTasks.emplace_back(pTask);
 	}
 
 	void Kill()
@@ -50,112 +50,105 @@ public:
 private:
 	void ProcessData_()
 	{
-
-		while (auto oTask = pMaster->GetTask())
+		while (true)
 		{
-			auto& pTask = *oTask;
-			SOCKET ClientSocket = pTask->socket;
-			int iResult = 0;
-			char recvbuf[DEFAULT_BUFLEN] = { 0 };
-			int recvbuflen = DEFAULT_BUFLEN;
+			auto oTask = pMaster->GetTask();
+			if (oTask) {
+				auto pTask = *oTask;
+				SOCKET cs = pTask->socket;
+				int iResult = 0;
+				char recvbuf[DEFAULT_BUFLEN] = { 0 };
+				int recvbuflen = DEFAULT_BUFLEN;
 
-			iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
-			if (iResult >= DEFAULT_BUFLEN) {
-				LOG_INFO("Bytes received: " << recvbuf << " size: " << iResult);
-				//if not client, break connection
-				if (recvbuf[0] != 'M') {
-					pMaster->RegisterPlayer(pTask, recvbuf[0], recvbuf, this);
-					NotifyClient_(ClientSocket, "ack ", DEFAULT_BUFLEN);
-					goto SOCKETCLOSE;
+				iResult = recv(cs, recvbuf, recvbuflen, 0);
+				if (iResult >= DEFAULT_BUFLEN) {
+					LOG_INFO("Bytes received: " << recvbuf << " size: " << iResult);
+					// Ack back to the sender
+					if (NotifyClient_(cs, "ack ", DEFAULT_BUFLEN)) {
+						//if not client, break connection
+						if (recvbuf[0] != 'M') {
+							pMaster->RegisterPlayer(pTask, recvbuf[0], recvbuf, this);
+						}
+						tasks.insert(std::make_pair(pTask, (uint_fast8_t)0));
+					}
+					else {
+						LogAndCloseSocket(pTask);
+					}
 				}
-				// Ack back to the sender
-				if (!NotifyClient_(ClientSocket, "ack ", DEFAULT_BUFLEN)) {
-					goto SOCKETCLOSE; // yes ikik GOTO but it's convenient asf
+				else if (iResult == 0) {
+					LOG_INFO("Connection closing...\n");
+					LogAndCloseSocket(pTask);
 				}
-				unsigned int count = 0;
-				//sleep for 120 seconds i.e. -> 2 min
-				while (count < 3) {
-					/*if (clientTask != nullptr) {
-						NotifyClient_(ClientSocket, (const char*)&(clientTask->addr), DEFAULT_BUFLEN);
-						clientTask = nullptr;
-						goto SOCKETCLOSE;
-					}*/
-					if (auto oServer = pMaster->GetServer()) {
+				else {
+					LOG_INFO("recv failed: ") /*<< WSAGetLastError()*/;
+					LogAndCloseSocket(pTask);
+				}
+			}
+			else if (!tasks.empty()) {
+				//unsigned int count = 0;
+				//sleep for 120 seconds i.e. -> 2 min EDIT: NO SLEEPING, NONONONO
+				if (!removeTasks.empty()) {
+					for (auto tsk : removeTasks)
+					{
+						tasks.erase(tsk);
+					}
+					removeTasks.clear();
+				}
+				for (auto& pair : tasks)
+				{
+					auto& pTask = pair.first;
+					if (pair.second >= 1000) {
+						// register as a client server
+						pMaster->RegisterPlayer(pTask, 'M', nullptr, this);
+					}
+					else if (pair.second >= 3000) {
+
+						// we found no players
+						NotifyClient_(pTask->socket, "nf  ", DEFAULT_BUFLEN);
+						tasks.erase(pTask);
+						LogAndCloseSocket(pTask);
+					}
+					else if (auto oServer = pMaster->GetServer()) {
 						//found server
 						auto& pServerTask = *oServer;
-						NotifyClient_(ClientSocket, (const char*)&(pServerTask->addr), DEFAULT_BUFLEN);
-						goto SOCKETCLOSE;
+						NotifyClient_(pTask->socket, (const char*)&(pServerTask->addr), DEFAULT_BUFLEN);
+						tasks.erase(pTask);
+						LogAndCloseSocket(pTask);
 					}
 					else if (auto oServer = pMaster->GetClientAsServer()) {
 						auto& pServerTask = *oServer;
 
 						auto pWorker = std::any_cast<Worker*>(pServerTask->pWorker);
-						if (pWorker != this && !IsIpEqual_(pServerTask->pTask.get(), pTask.get())) {
-							NotifyClient_(ClientSocket, (const char*)&(pServerTask->pTask->addr), DEFAULT_BUFLEN);
-							pWorker->AddClient(*pTask);
-							goto SOCKETCLOSE;
+						if (pWorker == this) {
+							if (auto search = tasks.find(pServerTask->pTask); search != tasks.end()) {
+								NotifyClient_(pTask->socket, (const char*)&(pServerTask->pTask->addr), DEFAULT_BUFLEN);
+								NotifyClient_(pServerTask->pTask->socket, (const char*)&(pTask->addr), DEFAULT_BUFLEN);
+								tasks.erase(pTask);
+								tasks.erase(pServerTask->pTask);
+								LogAndCloseSocket(pTask);
+								LogAndCloseSocket(pServerTask->pTask);
+							}
+						}
+						else if (!IsIpEqual_(pServerTask->pTask.get(), pTask.get())) {
+							NotifyClient_(pTask->socket, (const char*)&(pServerTask->pTask->addr), DEFAULT_BUFLEN);
+							pWorker->RemoveClient(pTask);
+							//goto SOCKETCLOSE;
 						}
 					}
-					else {
-						if (!NotifyClient_(ClientSocket, "ack ", DEFAULT_BUFLEN)) {
-							goto SOCKETCLOSE;
+					else if(pair.second % 1000 == 0) {
+						if (!NotifyClient_(pTask->socket, "ack ", DEFAULT_BUFLEN)) {
+							tasks.erase(pTask);
+							LogAndCloseSocket(pTask);
 						}
-						std::this_thread::sleep_for(std::chrono::seconds(10));
 					}
-					count++;
 				}
-				// register as a client server
-				pMaster->RegisterPlayer(pTask, recvbuf[0], recvbuf, this);
-
-
-
-				// we found no server, force client 
-				count = 0;
-				while (count < 10) {
-					if (clientTask.socket != 0) {
-						NotifyClient_(ClientSocket, (const char*)&(clientTask.addr), DEFAULT_BUFLEN);
-						clientTask = {0};
-						goto SOCKETCLOSE;
-					}
-					//else if (auto pServerTask = pMaster->GetServer()) {
-					//	//found server
-					//	NotifyClient_(ClientSocket, (const char*)&(pServerTask->addr), DEFAULT_BUFLEN);
-					//	goto SOCKETCLOSE;
-					//}
-					//else if (auto pServerTask = pMaster->ForceClientAsServer()) {
-					//	auto pWorker = std::any_cast<Worker*>(pServerTask->pWorker);
-					//	auto tsk = &pTask.value();
-					//	if (pWorker != this && !IsIpEqual_(pServerTask->pTask, tsk)) {
-					//		NotifyClient_(ClientSocket, (const char*)&(pServerTask->pTask->addr), DEFAULT_BUFLEN);
-					//		pWorker->AddClient(tsk);
-					//		goto SOCKETCLOSE;
-					//	}
-					//}
-					else {
-						if (!NotifyClient_(ClientSocket, "ack ", DEFAULT_BUFLEN)) {
-							goto SOCKETCLOSE;
-						}
-						std::this_thread::sleep_for(std::chrono::seconds(10));
-					}
-					count++;
-				}
-				// we found no players
-				NotifyClient_(ClientSocket, "nf", 2);
-			}
-			//else if (iResult > 7 || iResult < 7) {
-
-			//}
-			else if (iResult == 0) {
-				LOG_INFO("Connection closing...\n");
 			}
 			else {
-				LOG_INFO("recv failed: ") /*<< WSAGetLastError()*/;
+				break;
 			}
-		SOCKETCLOSE:
-			sockClose(ClientSocket);
-			LOG_INFO("Socket closed: " << "port:" << pTask->port);
 		}
 	}
+
 	void Run_()
 	{
 		std::unique_lock lk{ mtx };
@@ -166,8 +159,9 @@ private:
 			{
 				break;
 			}
+			lk.unlock();
 			ProcessData_();
-
+			lk.lock();
 			working = false;
 			pMaster->SignalDone();
 		}
@@ -191,13 +185,22 @@ private:
 		LOG_INFO("Sent buffer: " << buf << " size: " << iSendResult);
 		return true;
 	}
+	void LogAndCloseSocket(std::shared_ptr<Task> tsk) {
+		if (N_SocketClose(tsk->socket)) {
+			LOG_INFO("Socket closed: " << "port:" << tsk->port);
+			return;
+		}
+		LOG_INFO("Could not close socket: " << "port:" << tsk->port);
+	}
 private:
 	MasterControl* pMaster;
 	std::jthread thread;
 	std::condition_variable cv;
 	std::mutex mtx;
+	std::unordered_map<std::shared_ptr<Task>, uint_fast8_t> tasks;
+	std::vector<std::shared_ptr<Task>> removeTasks;
 	//shared memory
 	std::atomic<bool> working = false;
 	bool dying = false;
-	Task clientTask = {0};
+	Task removeTask = { 0 };
 };

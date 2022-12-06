@@ -1,22 +1,24 @@
 ﻿#pragma once
 #include <iostream>
+#include <stdint.h>
+#include <chrono>
 #ifdef _WIN32
-  /* See http://stackoverflow.com/questions/12765743/getaddrinfo-on-win32 */
-    #ifndef _WIN32_WINNT
-        #define _WIN32_WINNT 0x0501  /* Windows XP. */
-    #endif
-    #include <winsock2.h>
-    #include <Ws2tcpip.h>
-    #define SOCKET_ERROR(skt) (skt) == INVALID_SOCKET
-    #pragma comment(lib, "Ws2_32.lib")
+/* See http://stackoverflow.com/questions/12765743/getaddrinfo-on-win32 */
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0501  /* Windows XP. */
+#endif
+#include <winsock2.h>
+#include <Ws2tcpip.h>
+#define SOCKET_ERROR(skt) (skt) == INVALID_SOCKET
+#pragma comment(lib, "Ws2_32.lib")
 #else
-    /* Assume that any non-Windows platform uses POSIX-style sockets instead. */
-    #include <sys/socket.h>
-    #include <arpa/inet.h>
-    #include <netdb.h>  /* Needed for getaddrinfo() and freeaddrinfo() */
-    #include <unistd.h> /* Needed for close() */
-    typedef int SOCKET;
-    #define SOCKET_ERROR(skt) skt < 0
+/* Assume that any non-Windows platform uses POSIX-style sockets instead. */
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netdb.h>  /* Needed for getaddrinfo() and freeaddrinfo() */
+#include <unistd.h> /* Needed for close() */
+typedef int SOCKET;
+#define SOCKET_ERROR(skt) skt < 0
 #endif
 
 
@@ -29,37 +31,49 @@
 #define LOG_INFO(i);
 #endif
 
-int sockInit(void)
+int N_SockInit(void)
 {
 #ifdef _WIN32
-    WSADATA wsa_data;
-    return WSAStartup(MAKEWORD(1, 1), &wsa_data);
+	WSADATA wsa_data;
+	return WSAStartup(MAKEWORD(1, 1), &wsa_data);
 #else
-    return 0;
+	return 0;
 #endif
 }
 
-int sockQuit(void)
+int N_SockQuit(void)
 {
 #ifdef _WIN32
-    return WSACleanup();
+	return WSACleanup();
 #else
-    return 0;
+	return 0;
 #endif
 }
-int sockClose(SOCKET sock)
+int N_SocketClose(SOCKET sock)
 {
 
-    int status = 0;
+	int status = 0;
 
 #ifdef _WIN32
-    status = shutdown(sock, SD_BOTH);
-    if (status == 0) { status = closesocket(sock); }
+	status = shutdown(sock, SD_BOTH);
+	if (status == 0) { status = closesocket(sock); }
 #else
-    status = shutdown(sock, SHUT_RDWR);
-    if (status == 0) { status = close(sock); }
+	status = shutdown(sock, SHUT_RDWR);
+	if (status == 0) { status = close(sock); }
 #endif
 
-    return status;
+	return status;
 
+}
+int N_SetTimeLimit(SOCKET socket, std::chrono::milliseconds ms) {
+#ifdef _WIN32
+	DWORD timeout = ms.count();
+	return setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof timeout);
+
+#else
+	struct timeval tv;
+	tv.tv_sec = ms.count() / 1000;
+	tv.tv_usec = 0;
+	return setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+#endif
 }

@@ -9,7 +9,7 @@ int main()
 {
 	try
 	{
-		sockInit();
+		N_SockInit();
 		SOCKET server_fd, ClientSocket, valread;
 		struct sockaddr_in address;
 		int opt = 1;
@@ -29,6 +29,11 @@ int main()
 		//    perror("setsockopt");
 		//    exit(EXIT_FAILURE);
 		//}
+		using namespace std::literals::chrono_literals;
+		if (SOCKET_ERROR(N_SetTimeLimit(server_fd, 1ms))) {
+		    perror("setsockopt");
+		    exit(EXIT_FAILURE);
+		}
 		address.sin_family = AF_INET;
 		address.sin_addr.s_addr = INADDR_ANY;
 		address.sin_port = htons(PORT);
@@ -65,7 +70,7 @@ int main()
 			}
 		}
 		master.WaitForAllDone();
-		sockQuit();
+		N_SockQuit();
 		return 0;
 	}
 	catch (const std::exception& e)

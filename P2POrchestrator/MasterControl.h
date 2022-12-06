@@ -9,7 +9,7 @@
 #include <vector>
 #include <any>
 #include <optional>
-#include "Lobby.h"
+
 class MasterControl
 {
 public:
